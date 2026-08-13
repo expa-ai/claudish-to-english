@@ -59,6 +59,8 @@ MD_SUFFIX="${CLAUDISH_MD_SUFFIX:-plain}"
 MODEL="${CLAUDISH_MODEL:-gemma4:26b-mlx}"
 OLLAMA="${CLAUDISH_OLLAMA:-http://localhost:11434}"
 MIN_CHARS="${CLAUDISH_MIN_CHARS:-200}"
+# Reject a rewrite whose prose falls below this percentage of the original.
+MIN_RATIO_PCT="${CLAUDISH_MD_MIN_RATIO_PCT:-50}"
 STUB="${CLAUDISH_STUB:-0}"
 LLM_TIMEOUT="${CLAUDISH_MD_TIMEOUT:-150}"
 DEBUG="${CLAUDISH_DEBUG:-0}"
@@ -72,6 +74,13 @@ dbg() { [ "$DEBUG" = "1" ] && printf '%s [%s] %s\n' "$(date '+%H:%M:%S')" "$$" "
 
 # Fail-open: leave the file as the agent wrote it.
 pass_through() { dbg "pass_through: ${1:-}"; exit 0; }
+
+# Length of $1 ignoring fenced code and whitespace -- the part worth rewriting.
+prose_len_of() {
+  printf '%s' "$1" \
+    | awk 'BEGIN{f=0} /^```/{f=!f; next} f==0{print}' \
+    | tr -d '[:space:]' | wc -c | tr -d ' '
+}
 
 # Print the canonical absolute path of $1 (its parent directory must exist).
 # Runs in a subshell so the cd never leaks.
@@ -94,6 +103,8 @@ payload="$(cat)"
 CWD="$(printf '%s' "$payload"      | jq -r '.cwd // "."' 2>/dev/null)"
 SID="$(printf '%s' "$payload"      | jq -r '.session_id // "nosession"' 2>/dev/null)"
 file="$(printf '%s' "$payload"     | jq -r '.tool_input.file_path // empty' 2>/dev/null)"
+# $SID becomes a path component under $LOG_ROOT; keep '/' and '..' out of it.
+case "$SID" in ''|.|..|*[!A-Za-z0-9._-]*) SID="nosession" ;; esac
 [ -n "$file" ] || pass_through "no file_path"
 
 # ---- extension guard (belt-and-suspenders) -------------------------------
@@ -113,6 +124,10 @@ case "$file_abs" in
   *)            pass_through "outside CLAUDISH_MD_DIR ($file_abs not under $dir_abs)" ;;
 esac
 [ -f "$file_abs" ] || pass_through "file not on disk"
+# canon() canonicalises the PARENT directory but not the basename, so a symlink
+# sitting inside CLAUDISH_MD_DIR passes the containment check above while
+# pointing anywhere on disk -- which would ship the target's contents to the LLM.
+[ -L "$file_abs" ] && pass_through "symlink; containment cannot be guaranteed"
 
 content="$(cat "$file_abs" 2>/dev/null)" || pass_through "unreadable"
 dbg "candidate: $file_abs mode=$MD_MODE bytes=${#content}"
@@ -149,9 +164,7 @@ if [ "$first_line" = "$MARKER" ] || [ "$body_first" = "$MARKER" ]; then
 fi
 
 # ---- prose length gate (strip fenced code, count non-space chars) ---------
-prose_len="$(printf '%s' "$body" \
-  | awk 'BEGIN{f=0} /^```/{f=!f; next} f==0{print}' \
-  | tr -d '[:space:]' | wc -c | tr -d ' ')"
+prose_len="$(prose_len_of "$body")"
 dbg "prose_len=$prose_len min=$MIN_CHARS fm_lines=${fm_lines:-0}"
 [ "${prose_len:-0}" -ge "$MIN_CHARS" ] || pass_through "below min_chars"
 
@@ -202,6 +215,18 @@ if [ -z "$rewrite" ]; then
     fi
   fi
   pass_through "empty rewrite -> fail open"
+fi
+
+# ---- truncation guard -----------------------------------------------------
+# An empty rewrite fails open above, but a TRUNCATED one would not: a model that
+# stops early (token cap, refusal, a partial document) returns plenty of bytes,
+# and in overwrite mode those bytes replace real content permanently. Compare
+# prose against the source and refuse anything that lost most of the document.
+new_prose="$(prose_len_of "$rewrite")"
+min_keep=$(( prose_len * MIN_RATIO_PCT / 100 ))
+if [ "${new_prose:-0}" -lt "$min_keep" ]; then
+  dbg "rejected: prose $prose_len -> $new_prose (below ${MIN_RATIO_PCT}% floor of $min_keep)"
+  pass_through "rewrite lost too much content; file left unchanged"
 fi
 
 # ---- reassemble + write atomically ---------------------------------------
