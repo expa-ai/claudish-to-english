@@ -256,11 +256,17 @@ must never garble what it only half-parsed:
 ### Making it actually fire
 
 Heredocs are skipped, and a heredoc is how Claude usually writes a multi-line
-issue body — so without a project rule this hook will quietly do nothing. Add to
-your `CLAUDE.md`:
+issue body — so on its own this hook quietly does nothing most of the time.
+
+A `CLAUDE.md` rule can push Claude toward `--body-file`:
 
 > When posting GitHub issue or PR bodies, always write the body to a file and use
 > `--body-file`. Never use a heredoc or an inline `--body` for multi-line text.
+
+But that is a request, not a guarantee — Claude can ignore it. **For a reliable
+setup, use the [gh wrapper](#the-gh-wrapper) instead and turn this hook off with
+`CLAUDISH_GH_ENABLED=0`.** Keep the hook only where you cannot put a wrapper on
+PATH.
 
 ### Try it safely first
 
@@ -285,6 +291,66 @@ to real issues.
 
 Requires `python3` on PATH. On Windows that is often `python`, so the hook
 command in `hooks/hooks.json` may need adjusting.
+
+---
+
+## The gh wrapper
+
+`gh-wrapper.sh` is the reliable way to rewrite issue text. Install it as `gh`
+somewhere earlier on your PATH than the real `gh`.
+
+**Why it beats the hook.** The hook inspects the command *before* the shell runs
+it, so it has to cope with heredocs, `$(...)` and quoting — and refuses whatever
+it cannot rebuild safely. The wrapper runs *after* the shell has finished. By
+then the heredoc is expanded, the quotes are gone, and the finished text arrives
+as ordinary arguments. There is nothing left to parse, so nothing left to get
+wrong. It does not matter how Claude wrote the command.
+
+It rewrites the body and passes it to the real `gh` via `--body-file`, using a
+temp file. If you supplied your own `--body-file`, **your file is never
+modified**.
+
+### Install
+
+```sh
+mkdir -p ~/.local/bin
+cp gh-wrapper.sh ~/.local/bin/gh
+chmod +x ~/.local/bin/gh
+which gh          # must print ~/.local/bin/gh, not the real one
+gh --version      # must still work
+```
+
+If `which gh` still shows the real one, put `~/.local/bin` earlier on your PATH.
+
+Then disable the hook so the text is not rewritten twice:
+
+```json
+{ "env": { "CLAUDISH_GH_ENABLED": "0" } }
+```
+
+### Config
+
+| Var | Default | Meaning |
+|---|---|---|
+| `CLAUDISH_GH_WRAPPER` | `1` | master switch |
+| `CLAUDISH_GH_ONLY_CC` | `1` | only rewrite inside Claude Code. Set `0` to also rewrite `gh` commands you type yourself |
+| `CLAUDISH_GH_REAL` | auto | path to the real `gh`, if it is somewhere unusual |
+| `CLAUDISH_GH_TIMEOUT` | `45` | rewrite timeout |
+| `CLAUDISH_GH_MIN_CHARS` | `200` | skip bodies shorter than this |
+| `CLAUDISH_GH_MIN_PCT` | `50` | reject rewrites below this percentage of the original |
+| `CLAUDISH_GH_DRYRUN` | `0` | log what would change, post the original |
+
+`touch ~/.claude/claudish-off` disables it instantly, same as the other hooks.
+
+### It always fails open
+
+Rewriter down, timed out, empty answer, truncated answer, no `jq` — the original
+command runs unchanged. The wrapper can never stop you posting, and never posts
+anything it did not fully produce. Failures print one line to stderr and post the
+original.
+
+Everything else — `gh pr list`, `gh repo view`, any command without a body — is
+handed straight to the real `gh` untouched.
 
 ---
 
