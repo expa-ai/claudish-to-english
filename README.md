@@ -21,6 +21,10 @@ are written or edited (opt-in, off by default).
 
 ---
 
+> **Setting this up on your machine? Read [SETUP.md](SETUP.md) instead.**
+> This README explains how the plugin works and what we changed. SETUP.md is the
+> step-by-step guide for the team.
+
 ## This is a fork
 
 Forked from [gvzdv/claudish-to-english](https://github.com/gvzdv/claudish-to-english)
