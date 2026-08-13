@@ -10,6 +10,23 @@ Two separate things. You can have either, or both.
 plain English in the issue instead of dense engineering prose. This is the one
 that matters for the team, because it changes what other people read.
 
+The plain version goes on top. Your original is kept underneath in a collapsed
+`Original` block, so nothing is lost — anyone who wants the exact technical
+wording clicks to expand it:
+
+```markdown
+The problem is in `src/db/pool.py`. When the Celery worker forks, ...
+
+<details>
+<summary>Original</summary>
+
+I've traced the failure to the connection pooling layer in `src/db/pool.py`...
+
+</details>
+```
+
+Set `CLAUDISH_GH_KEEP_ORIGINAL=0` if you'd rather post only the rewrite.
+
 **2. It shows a plain-English version of Claude's replies in your terminal.**
 This is display-only. It never changes what Claude does, what goes in the
 transcript, or what Claude remembers. Only your screen changes.
