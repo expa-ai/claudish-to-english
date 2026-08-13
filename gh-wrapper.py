@@ -115,6 +115,20 @@ def prose_len(text):
     return len("".join("".join(out).split()))
 
 
+def compose(new, original):
+    """Plain English on top, the original underneath in a collapsed block.
+
+    The blank line after </summary> is required, or GitHub renders the Markdown
+    inside as literal text. Skipped when the original already contains
+    </details>, which would close our block early and mangle the comment.
+    """
+    if env("CLAUDISH_GH_KEEP_ORIGINAL", "1") != "1" or "</details>" in original:
+        return new if new.endswith("\n") else new + "\n"
+    label = env("CLAUDISH_GH_ORIGINAL_LABEL", "Original")
+    return "%s\n\n<details>\n<summary>%s</summary>\n\n%s\n\n</details>\n" % (
+        new.rstrip("\n"), label, original.rstrip("\n"))
+
+
 def find_body(args):
     """Return (kind, index, prefix) for the body argument, or (None, -1, None).
 
@@ -226,7 +240,7 @@ def main():
     try:
         fd, tmp = tempfile.mkstemp(prefix="claudish-gh-", suffix=".md")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(new if new.endswith("\n") else new + "\n")
+            fh.write(compose(new, body))
     except Exception as e:
         if tmp:
             try:

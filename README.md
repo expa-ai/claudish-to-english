@@ -291,6 +291,8 @@ to real issues.
 | `CLAUDISH_GH_TIMEOUT` | `45` | LLM timeout; keep below the hook timeout in `hooks.json` |
 | `CLAUDISH_GH_MIN_CHARS` | `200` | skip bodies shorter than this |
 | `CLAUDISH_GH_MIN_RATIO` | `0.5` | reject rewrites that lose more prose than this |
+| `CLAUDISH_GH_KEEP_ORIGINAL` | `1` | append the original in a collapsed `<details>` block |
+| `CLAUDISH_GH_ORIGINAL_LABEL` | `Original` | summary text of that block |
 | `CLAUDISH_GH_DRYRUN` | `0` | log the rewrite, post the original |
 | `CLAUDISH_GH_COMMANDS` | `\bgh\s+(issue\|pr)\s+(create\|comment\|edit)\b` | which commands qualify |
 
@@ -314,6 +316,30 @@ wrong. It does not matter how Claude wrote the command.
 It rewrites the body and passes it to the real `gh` via `--body-file`, using a
 temp file. If you supplied your own `--body-file`, **your file is never
 modified**.
+
+### What gets posted
+
+The plain-English version, with the original preserved underneath in a collapsed
+block:
+
+```markdown
+The problem is in `src/db/pool.py`. When the Celery worker forks, ...
+
+<details>
+<summary>Original</summary>
+
+I've traced the failure to the connection pooling layer in `src/db/pool.py`...
+
+</details>
+```
+
+Your teammate reads plain English. Anyone who needs the exact wording clicks to
+expand. Nothing is lost, which matters because a rewrite can drift in meaning
+while keeping its length — the length guard cannot catch that, but a reader can.
+
+Set `CLAUDISH_GH_KEEP_ORIGINAL=0` to post only the rewrite. The block is also
+skipped automatically when the original already contains `</details>`, which
+would otherwise close it early and mangle the comment.
 
 There are two implementations with identical behaviour and identical config.
 Pick one per machine:
@@ -377,6 +403,8 @@ Otherwise the text is rewritten twice:
 | `CLAUDISH_GH_TIMEOUT` | `45` | rewrite timeout |
 | `CLAUDISH_GH_MIN_CHARS` | `200` | skip bodies shorter than this |
 | `CLAUDISH_GH_MIN_PCT` | `50` | reject rewrites below this percentage of the original |
+| `CLAUDISH_GH_KEEP_ORIGINAL` | `1` | append the original in a collapsed `<details>` block |
+| `CLAUDISH_GH_ORIGINAL_LABEL` | `Original` | summary text of that block |
 | `CLAUDISH_GH_DRYRUN` | `0` | log what would change, post the original |
 
 `touch ~/.claude/claudish-off` disables it instantly, same as the other hooks.

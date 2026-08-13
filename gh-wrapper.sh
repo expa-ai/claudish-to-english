@@ -175,7 +175,26 @@ fi
 # A temp file, never the caller's own --body-file: their file stays untouched.
 TMP="$(mktemp "${TMPDIR:-/tmp}/claudish-gh.XXXXXX")" || passthrough "mktemp failed"
 trap 'rm -f "$TMP"' EXIT
-printf '%s\n' "$NEW" > "$TMP" 2>/dev/null || passthrough "temp write failed"
+
+# The plain-English version is what people read; the original goes underneath in
+# a collapsed block so the exact wording is never lost. GitHub needs the blank
+# line after </summary> or the Markdown inside will not render.
+#
+# Skipped if the original already contains </details>, which would close our
+# block early and mangle the comment.
+KEEP="${CLAUDISH_GH_KEEP_ORIGINAL:-1}"
+case "$BODY" in *"</details>"*) KEEP=0; dbg "original contains </details>; posting rewrite only" ;; esac
+
+if [ "$KEEP" = "1" ]; then
+  {
+    printf '%s\n\n' "$NEW"
+    printf '<details>\n<summary>%s</summary>\n\n' "${CLAUDISH_GH_ORIGINAL_LABEL:-Original}"
+    printf '%s\n\n' "$BODY"
+    printf '</details>\n'
+  } > "$TMP" 2>/dev/null || passthrough "temp write failed"
+else
+  printf '%s\n' "$NEW" > "$TMP" 2>/dev/null || passthrough "temp write failed"
+fi
 
 if [ "$JOINED" = "1" ]; then
   args[BODY_IDX]="--body-file=$TMP"

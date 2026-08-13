@@ -183,6 +183,20 @@ def rewrite(text):
     return new
 
 
+def compose(new, original):
+    """Plain English on top, the original underneath in a collapsed block.
+
+    The blank line after </summary> is required, or GitHub renders the Markdown
+    inside as literal text. Skipped when the original already contains
+    </details>, which would close our block early and mangle the comment.
+    """
+    if os.environ.get("CLAUDISH_GH_KEEP_ORIGINAL", "1") != "1" or "</details>" in original:
+        return new
+    label = os.environ.get("CLAUDISH_GH_ORIGINAL_LABEL", "Original")
+    return "%s\n\n<details>\n<summary>%s</summary>\n\n%s\n\n</details>" % (
+        new.rstrip("\n"), label, original.rstrip("\n"))
+
+
 def find_flag(tokens, names):
     """Index of a flag's VALUE, or None. Handles --flag=value too."""
     for i, tok in enumerate(tokens):
@@ -221,10 +235,11 @@ def handle_body_file(tokens, cwd):
         return passthrough("dryrun")
 
     # Write atomically, and only within the file's own directory.
+    out = compose(new, original)
     tmp = "%s.claudish.%d.tmp" % (path, os.getpid())
     try:
         with open(tmp, "w") as fh:
-            fh.write(new if new.endswith("\n") else new + "\n")
+            fh.write(out if out.endswith("\n") else out + "\n")
         os.replace(tmp, path)
     except Exception as e:
         try:
@@ -254,7 +269,8 @@ def handle_inline_body(tokens, tool_input):
         dbg("DRYRUN: would rewrite inline body (%d -> %d chars)" % (len(original), len(new)))
         return passthrough("dryrun")
 
-    tokens[idx] = (prefix + new) if prefix else new
+    composed = compose(new, original)
+    tokens[idx] = (prefix + composed) if prefix else composed
     try:
         rebuilt = " ".join(shlex.quote(t) for t in tokens)
     except Exception as e:
