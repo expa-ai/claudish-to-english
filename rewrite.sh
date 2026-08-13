@@ -31,6 +31,13 @@
 #                                          ~/.claude/claudish-off) — lets a
 #                                          hotkey/script toggle mid-session
 #   CLAUDISH_MODE      append|replace display strategy (default append)
+#   CLAUDISH_DISPLAY_MODE always|gh   when to rewrite at all (default always).
+#                                          "gh" rewrites only while the session
+#                                          is writing to GitHub issues/PRs --
+#                                          see CLAUDISH_GH_PATTERN
+#   CLAUDISH_GH_LOOKBACK  <n>         transcript lines scanned for that (default 60)
+#   CLAUDISH_GH_PATTERN   <ere>       what counts as GitHub work
+#                                          (default: gh +(issue|pr) +(create|comment|edit))
 #   CLAUDISH_MODEL     <ollama model> (default gemma4:26b-mlx)
 #   CLAUDISH_OLLAMA    <base url>     (default http://localhost:11434)
 #   CLAUDISH_MIN_CHARS <n>            skip messages shorter than this
@@ -59,6 +66,10 @@ STUB="${CLAUDISH_STUB:-0}"
 LLM_TIMEOUT="${CLAUDISH_TIMEOUT:-45}"
 DEBUG="${CLAUDISH_DEBUG:-0}"
 NOTICE="${CLAUDISH_NOTICE:-1}"
+# always (upstream behaviour) | gh (only while writing to GitHub issues/PRs)
+DISPLAY_MODE="${CLAUDISH_DISPLAY_MODE:-always}"
+GH_LOOKBACK="${CLAUDISH_GH_LOOKBACK:-60}"
+GH_PATTERN="${CLAUDISH_GH_PATTERN:-gh +(issue|pr) +(create|comment|edit)}"
 
 BUF_ROOT="${TMPDIR:-/tmp}/claudish-to-english"
 SEP=$'\n\n────────────────────────\n💬 In plain English:\n\n'
@@ -101,6 +112,11 @@ final="$(printf '%s' "$payload" | jq -r '.final // false' 2>/dev/null)"
 tpath="$(printf '%s' "$payload" | jq -r '.transcript_path // empty' 2>/dev/null)"
 [ -n "$mid" ] || pass_through
 case "$idx" in ''|*[!0-9]*) idx=0 ;; esac
+# $sid and $mid become path components under $BUF_ROOT and reach `rm -rf`, so a
+# value containing '/' or '..' must never survive. idx was already validated
+# above; these were not.
+case "$sid" in ''|.|..|*[!A-Za-z0-9._-]*) sid="nosession" ;; esac
+case "$mid" in ''|.|..|*[!A-Za-z0-9._-]*) pass_through ;; esac
 
 # Opportunistic cleanup of abandoned buffers (older than 30 min), then of the
 # session directories they leave behind once empty.
@@ -109,6 +125,35 @@ find "$BUF_ROOT" -mindepth 1 -maxdepth 1 -type d -empty -mmin +30 -exec rmdir {}
 
 mdir="$BUF_ROOT/$sid/$mid"
 mkdir -p "$mdir" 2>/dev/null || pass_through
+
+# ---- display-mode gate ----------------------------------------------------
+# CLAUDISH_DISPLAY_MODE=gh rewrites only while the session is actually writing
+# to GitHub, instead of on every assistant message. The decision is made HERE,
+# before the replace-mode branch below, so a gated-off message is never blanked
+# and then restored -- it simply streams normally.
+#
+# Cached per message: the transcript scan is one jq pass, and a message can
+# arrive as dozens of chunks.
+if [ "$DISPLAY_MODE" = "gh" ]; then
+  gate="$mdir/.gate"
+  if [ ! -f "$gate" ]; then
+    verdict=0
+    if [ -n "$tpath" ] && [ -f "$tpath" ]; then
+      # Any Bash tool call in the recent transcript that writes to an issue/PR.
+      if tail -n "$GH_LOOKBACK" "$tpath" 2>/dev/null \
+         | jq -rs '[ .[]? | select(.type=="assistant")
+                     | .message.content[]?
+                     | select(.type=="tool_use" and .name=="Bash")
+                     | .input.command // empty ] | join("\n")' 2>/dev/null \
+         | grep -qE "$GH_PATTERN"; then
+        verdict=1
+      fi
+    fi
+    printf '%s' "$verdict" > "$gate" 2>/dev/null || true
+    dbg "gh gate: verdict=$verdict lookback=$GH_LOOKBACK"
+  fi
+  [ "$(cat "$gate" 2>/dev/null)" = "1" ] || pass_through
+fi
 
 # Persist this chunk's delta exactly (jq -j = no added trailing newline).
 printf '%s' "$payload" | jq -j '.delta // ""' > "$mdir/$(printf '%08d' "$idx").part" 2>/dev/null || pass_through
