@@ -31,6 +31,7 @@ reviewed before they land. What differs:
 |---|---|
 | **New `rewrite-gh.py`** (`PreToolUse`) rewrites GitHub issue/PR bodies before they post | Our team communicates with humans through GitHub issues; the text that needs to be readable is what lands in the issue, not what scrolls past in the terminal |
 | **`CLAUDISH_DISPLAY_MODE`** can gate the display hook to GitHub work | Kept as an option, but we run the default (`always`). See the note below on why gating turned out to be the wrong idea |
+| **`gh` wrapper** in bash and Python, so the rewrite no longer depends on how Claude wrote the command | A `CLAUDE.md` rule is a request, not a guarantee; the wrapper runs after the shell, where there is nothing left to parse |
 | Works against **LM Studio**, not just ollama | Via a translating shim; see [Backends](#backends) |
 | Truncation guard on Markdown rewrites | A model that stops early returns plenty of bytes; without a length check, `overwrite` mode replaces real content with a partial document |
 | Symlink guard on `CLAUDISH_MD_DIR` | The containment check resolves the parent directory but not the basename, so a symlink inside the directory could point anywhere on disk |
@@ -310,7 +311,15 @@ It rewrites the body and passes it to the real `gh` via `--body-file`, using a
 temp file. If you supplied your own `--body-file`, **your file is never
 modified**.
 
-### Install
+There are two implementations with identical behaviour and identical config.
+Pick one per machine:
+
+| File | For | Needs |
+|---|---|---|
+| `gh-wrapper.sh` | macOS, Linux, Git Bash | `jq`, `curl` |
+| `gh-wrapper.py` + `gh.cmd` | Windows (cmd, PowerShell) | Python only |
+
+### Install — macOS / Linux
 
 ```sh
 mkdir -p ~/.local/bin
@@ -322,7 +331,33 @@ gh --version      # must still work
 
 If `which gh` still shows the real one, put `~/.local/bin` earlier on your PATH.
 
-Then disable the hook so the text is not rewritten twice:
+### Install — Windows
+
+Copy **both** files into a directory that comes before the real `gh` on PATH,
+keeping them together — `gh.cmd` looks for `gh-wrapper.py` beside itself.
+
+```bat
+mkdir "%USERPROFILE%\.local\bin"
+copy gh-wrapper.py "%USERPROFILE%\.local\bin\"
+copy gh.cmd        "%USERPROFILE%\.local\bin\"
+```
+
+Add that directory to PATH ahead of the real `gh`, then check:
+
+```bat
+where gh          :: gh.cmd must be listed FIRST
+gh --version      :: must still work
+```
+
+`gh.cmd` finds Python via `py`, `python`, or `python3`. If none is present it
+falls back to the real `gh`, so your commands keep working either way.
+
+Git Bash resolves `gh` (the bash script) rather than `gh.cmd`, so on a Windows
+box that uses Git Bash you can install `gh-wrapper.sh` as well — they coexist.
+
+### Then turn off the hook
+
+Otherwise the text is rewritten twice:
 
 ```json
 { "env": { "CLAUDISH_GH_ENABLED": "0" } }
