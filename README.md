@@ -30,7 +30,7 @@ reviewed before they land. What differs:
 | Change | Why |
 |---|---|
 | **New `rewrite-gh.py`** (`PreToolUse`) rewrites GitHub issue/PR bodies before they post | Our team communicates with humans through GitHub issues; the text that needs to be readable is what lands in the issue, not what scrolls past in the terminal |
-| **`CLAUDISH_DISPLAY_MODE=gh`** gates the display hook | We do not want a rewrite on every message — only while writing to GitHub |
+| **`CLAUDISH_DISPLAY_MODE`** can gate the display hook to GitHub work | Kept as an option, but we run the default (`always`). See the note below on why gating turned out to be the wrong idea |
 | Works against **LM Studio**, not just ollama | Via a translating shim; see [Backends](#backends) |
 | Truncation guard on Markdown rewrites | A model that stops early returns plenty of bytes; without a length check, `overwrite` mode replaces real content with a partial document |
 | Symlink guard on `CLAUDISH_MD_DIR` | The containment check resolves the parent directory but not the basename, so a symlink inside the directory could point anywhere on disk |
@@ -301,6 +301,16 @@ In `gh` mode the decision is made before the replace-mode branch, so a gated-off
 message streams normally instead of being blanked and then restored. The verdict
 is cached per message, so the transcript scan runs once rather than once per
 streamed chunk.
+
+> **We run `always`, and suggest you do too.** The two hooks serve different
+> readers: `rewrite-gh.py` serves your teammates, who did not write the code,
+> while the display hook serves you. Gating the display hook to GitHub work
+> fires it exactly when `rewrite-gh.py` is already rewriting that same text —
+> so it spends time explaining your own words back to you, and leaves every
+> other message unrewritten. If the added latency bothers you, turn the display
+> hook off entirely rather than switching to `gh`.
+>
+> To pause mid-session without restarting: `touch ~/.claude/claudish-off`.
 
 | Var | Default | Meaning |
 |---|---|---|
