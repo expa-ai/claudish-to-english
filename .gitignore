@@ -1,2 +1,4 @@
 .DS_Store
 *.plain.md
+__pycache__/
+*.pyc

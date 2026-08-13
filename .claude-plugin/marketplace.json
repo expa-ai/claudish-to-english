@@ -1,16 +1,15 @@
 {
-  "name": "gvzdv-plugins",
+  "name": "expa-plugins",
   "owner": {
-    "name": "Mike Gvozdev",
-    "email": "mv.gvozdev@gmail.com",
-    "url": "https://github.com/gvzdv"
+    "name": "expa-ai",
+    "url": "https://github.com/expa-ai"
   },
-  "description": "Mike Gvozdev's Claude Code plugins.",
+  "description": "expa-ai's Claude Code plugins.",
   "plugins": [
     {
       "name": "claudish-to-english",
       "source": "./",
-      "description": "Shows a plain-English rewrite of each Claude Code assistant message, produced by a local LLM (ollama). Display-only.",
+      "description": "Rewrites GitHub issue/PR bodies into plain English before posting, and optionally shows a plain-English rewrite of assistant messages. Fork of gvzdv/claudish-to-english.",
       "category": "productivity"
     }
   ]

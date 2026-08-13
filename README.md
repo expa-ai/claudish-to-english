@@ -21,6 +21,27 @@ are written or edited (opt-in, off by default).
 
 ---
 
+## This is a fork
+
+Forked from [gvzdv/claudish-to-english](https://github.com/gvzdv/claudish-to-english)
+(MIT, © Mike Gvozdev). It does not track upstream automatically — changes are
+reviewed before they land. What differs:
+
+| Change | Why |
+|---|---|
+| **New `rewrite-gh.py`** (`PreToolUse`) rewrites GitHub issue/PR bodies before they post | Our team communicates with humans through GitHub issues; the text that needs to be readable is what lands in the issue, not what scrolls past in the terminal |
+| **`CLAUDISH_DISPLAY_MODE=gh`** gates the display hook | We do not want a rewrite on every message — only while writing to GitHub |
+| Works against **LM Studio**, not just ollama | Via a translating shim; see [Backends](#backends) |
+| Truncation guard on Markdown rewrites | A model that stops early returns plenty of bytes; without a length check, `overwrite` mode replaces real content with a partial document |
+| Symlink guard on `CLAUDISH_MD_DIR` | The containment check resolves the parent directory but not the basename, so a symlink inside the directory could point anywhere on disk |
+| `session_id` / `message_id` sanitised before use as paths | They reach `rm -rf` as path components; `index` was already validated, these were not |
+
+The `rewrite-gh.py` hook is the one thing here that is **not** display-only — it
+changes what your teammates read. It fails open on any doubt, but treat it with
+more care than the rest.
+
+---
+
 ## Requirements (read this first)
 
 This plugin shells out to a **local** model. Nothing works until these are in place:
@@ -197,6 +218,116 @@ as every other setting — the `env` block of your `settings.json`:
 
 In `overwrite` mode the marker comment is written **after** any YAML
 frontmatter, so the frontmatter stays on line 1 where parsers expect it.
+
+---
+
+## GitHub issue rewrite (`rewrite-gh.py`)
+
+Fires on `PreToolUse` for `Bash`. When Claude runs a `gh issue` or `gh pr`
+write, the body is rewritten into plain English **before it posts**.
+
+This hook is written in Python rather than shell on purpose: it has to parse and
+rebuild a command that posts to GitHub, and `shlex` gets quoting right where a
+regex in bash is exactly where injection bugs live.
+
+### Two shapes, not equally trusted
+
+**`--body-file PATH`** — the file is rewritten in place and the command is left
+completely alone. No shell string is rebuilt, so there is nothing to mis-quote.
+**Prefer this.**
+
+**`--body TEXT`** — the command must be rebuilt. Tokenised with `shlex`, the body
+token replaced, then re-quoted with `shlex.quote`. The rebuilt command is checked
+to re-parse into identical tokens before it is accepted.
+
+### What passes through untouched
+
+Anything the hook cannot fully understand, because a hook that posts to GitHub
+must never garble what it only half-parsed:
+
+- **heredocs** — `shlex` cannot round-trip them
+- **`$(...)` or backticks where the shell would act on them.** Inside single
+  quotes these are literal text, and Markdown bodies are full of backticks, so
+  the check tracks quote state rather than scanning the raw string
+- pipes, redirects, and `&&`/`;` chains
+- bodies shorter than `CLAUDISH_GH_MIN_CHARS`
+- rewrites whose prose falls below `CLAUDISH_GH_MIN_RATIO` of the original
+
+### Making it actually fire
+
+Heredocs are skipped, and a heredoc is how Claude usually writes a multi-line
+issue body — so without a project rule this hook will quietly do nothing. Add to
+your `CLAUDE.md`:
+
+> When posting GitHub issue or PR bodies, always write the body to a file and use
+> `--body-file`. Never use a heredoc or an inline `--body` for multi-line text.
+
+### Try it safely first
+
+```sh
+CLAUDISH_GH_DRYRUN=1
+```
+
+Logs what it *would* have posted to `$TMPDIR/claudish-to-english/debug-gh.log`
+and posts the original unchanged. Worth running for a day before letting it write
+to real issues.
+
+### Config
+
+| Var | Default | Meaning |
+|---|---|---|
+| `CLAUDISH_GH_ENABLED` | `1` | master switch for this hook |
+| `CLAUDISH_GH_TIMEOUT` | `45` | LLM timeout; keep below the hook timeout in `hooks.json` |
+| `CLAUDISH_GH_MIN_CHARS` | `200` | skip bodies shorter than this |
+| `CLAUDISH_GH_MIN_RATIO` | `0.5` | reject rewrites that lose more prose than this |
+| `CLAUDISH_GH_DRYRUN` | `0` | log the rewrite, post the original |
+| `CLAUDISH_GH_COMMANDS` | `\bgh\s+(issue\|pr)\s+(create\|comment\|edit)\b` | which commands qualify |
+
+Requires `python3` on PATH. On Windows that is often `python`, so the hook
+command in `hooks/hooks.json` may need adjusting.
+
+---
+
+## Gating the display hook
+
+`CLAUDISH_DISPLAY_MODE` controls **when** the display hook rewrites at all:
+
+| Value | Behaviour |
+|---|---|
+| `always` (default) | upstream behaviour — every assistant message |
+| `gh` | only while the session is writing to GitHub issues/PRs |
+
+In `gh` mode the decision is made before the replace-mode branch, so a gated-off
+message streams normally instead of being blanked and then restored. The verdict
+is cached per message, so the transcript scan runs once rather than once per
+streamed chunk.
+
+| Var | Default | Meaning |
+|---|---|---|
+| `CLAUDISH_DISPLAY_MODE` | `always` | `always` or `gh` |
+| `CLAUDISH_GH_LOOKBACK` | `60` | transcript lines scanned |
+| `CLAUDISH_GH_PATTERN` | `gh +(issue\|pr) +(create\|comment\|edit)` | what counts as GitHub work |
+
+---
+
+## Backends
+
+Both hooks POST to `$CLAUDISH_OLLAMA/api/chat` and read `.message.content` —
+ollama's shape.
+
+**ollama** works out of the box.
+
+**LM Studio** does not: it serves `/v1/chat/completions` and returns
+`.choices[0].message.content`. Run a translating shim in front of it and point
+`CLAUDISH_OLLAMA` at the shim. Ours lives at `deploy/claudish-shim/` on the host
+that runs LM Studio and is reached over Tailscale, which also lets several
+machines share one model.
+
+**Use a non-reasoning model.** A reasoning model spends thousands of tokens
+thinking before it answers; measured on one realistic message, a 35B reasoning
+model took 61.8s against Claude Code's 60s hook ceiling — every rewrite is killed,
+and because `curl` is killed rather than returning an error, you usually get no
+diagnostic at all. A small instruct model does the same job in ~13s.
 
 ---
 
